@@ -1,44 +1,57 @@
-const axios = require('axios');
+const OpenAI = require('openai');
 const config = require('../config/config');
 const chatHistoryController = require('./chatHistoryController');
+
+const openai = new OpenAI({
+    apiKey: config.openaiApiKey
+});
+const deepseek = new OpenAI({
+    baseURL: 'https://api.deepseek.com',
+    apiKey: config.deepseekApiKey
+});
 
 // Handle the message exchange with GPT-4 and save the session history
 exports.fetchGptResponse = async (req, res) => {
     const username = req.user.username;
-    const { content, sessionId } = req.body;
+    const { content, sessionId, modelProvider = 'openai', modelName = 'gpt-4-turbo' } = req.body;
 
     try {
         // 1. Fetch existing chat history for the specified session
         const messages = await chatHistoryController.getSessionMessages(username, sessionId);
         messages.push({ role: 'user', content });
 
-        // 2. Send the chat history to GPT-4 API along with the new message
+        // 2. Set system instructions
+        // TODO: Implement a way to set system instructions
         const systemInstructions = req.user.systemInstructions;
-        const response = await axios.post(
-            'https://api.openai.com/v1/chat/completions',
-            {
-                model: 'gpt-4-turbo',
-                messages: [
-                    { role: 'system', content: systemInstructions },
-                    ...messages,
-                ],
-            },
-            {
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${config.openaiApiKey}`,
-                },
-            }
-        );
+        const fullMessages = [
+            { role: "system", content: systemInstructions },
+            ...messages,
+        ];
 
-        // 3. Prepare assistant's message based on the GPT-4 response
+        let response;
+
+        if (modelProvider === "openai") {
+            response = await openai.chat.completions.create({
+                model: modelName,
+                messages: fullMessages,
+            });
+        } else if (modelProvider === "deepseek") {
+            response = await deepseek.chat.completions.create({
+                model: modelName,
+                messages: fullMessages,
+            });
+        } else {
+            throw new Error("Invalid model provider");
+        }
+
+        // 4. Prepare assistant's message from OpenAI response
         const assistantMessage = {
-            role: 'assistant',
-            content: response.data.choices[0].message.content,
+            role: "assistant",
+            content: response.choices[0].message.content,
         };
         messages.push(assistantMessage);
 
-        // 4. Save the updated chat history for the session
+        // 5. Save updated chat history
         await chatHistoryController.saveChatHistory(username, sessionId, messages);
 
         res.json(assistantMessage);
